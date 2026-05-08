@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npm create *)",
+      "Bash(node server.js)",
+      "Bash(echo \"Backend PID: $!\")",
+      "Bash(sleep 3 && cat /tmp/backend.log)",
+      "Bash(kill 97589)",
+      "Bash(kill 97704)",
+      "Bash(curl -s http://localhost:4000/api/water-levels/latest)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); r=d['record']; print\\('Latest:', r['ngay'], r['gio'], '| A Vương:', r['a_vuong']['mucNuoc'], '| Đăk Mi 4:', r['dak_mi_4']['mucNuoc']\\)\")",
+      "Bash(npm run *)",
+      "Bash(pkill -f \"node server.js\")",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl -s http://localhost:4000/api/health)",
+      "Bash(rm -f \"/Users/tranhien/Downloads/files \\(1\\)/App.jsx\")",
+      "Bash(git init *)",
+      "Bash(git config *)"
+    ]
+  }
+}
