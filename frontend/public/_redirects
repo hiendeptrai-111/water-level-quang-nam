@@ -1,0 +1,2 @@
+# Render Static Site SPA fallback — mọi route trả về index.html để React Router xử lý
+/*    /index.html   200
