@@ -299,16 +299,29 @@ app.post('/api/photos/:id/comments', requireAuth, async (req, res) => {
 });
 
 // ─── REST: realtime data (public) ──────────────────────────────
-app.get('/api/water-levels', (req, res) => {
-  if (!fs.existsSync(DATA_FILE)) return res.status(404).json({ error: 'Chưa có dữ liệu' });
-  res.json(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+app.get('/api/water-levels', async (req, res) => {
+  try {
+    const records = await getRecords({ limit: 200 });
+    if (records.length) return res.json({ lastUpdated: new Date().toISOString(), records });
+    if (fs.existsSync(DATA_FILE)) return res.json(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+    res.status(404).json({ error: 'Chưa có dữ liệu' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-app.get('/api/water-levels/latest', (req, res) => {
-  if (!fs.existsSync(DATA_FILE)) return res.status(404).json({ error: 'Chưa có dữ liệu' });
-  const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-  const latest = data.records?.[data.records.length - 1] || null;
-  res.json({ lastUpdated: data.lastUpdated, record: latest });
+app.get('/api/water-levels/latest', async (req, res) => {
+  try {
+    const records = await getRecords({ limit: 1 });
+    if (records.length) return res.json({ lastUpdated: new Date().toISOString(), record: records[records.length - 1] });
+    if (fs.existsSync(DATA_FILE)) {
+      const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+      return res.json({ lastUpdated: data.lastUpdated, record: data.records?.[data.records.length - 1] || null });
+    }
+    res.status(404).json({ error: 'Chưa có dữ liệu' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/scrape', async (req, res) => {
@@ -395,11 +408,24 @@ app.get('/api/prediction/:hoKey', requireAuth, async (req, res) => {
 });
 
 // ─── Socket.IO ──────────────────────────────────────────────────
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
   console.log(`🔌  Client kết nối: ${socket.id}`);
-  if (fs.existsSync(DATA_FILE)) {
-    socket.emit('snapshot', JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+
+  // Snapshot: ưu tiên Postgres (production), fallback file (dev)
+  try {
+    const records = await getRecords({ limit: 200 });
+    if (records.length) {
+      socket.emit('snapshot', { lastUpdated: new Date().toISOString(), records });
+    } else if (fs.existsSync(DATA_FILE)) {
+      socket.emit('snapshot', JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+    }
+  } catch (err) {
+    log.error('snapshot failed', { error: err.message });
+    if (fs.existsSync(DATA_FILE)) {
+      socket.emit('snapshot', JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
+    }
   }
+
   socket.on('disconnect', () => console.log(`🔌  Client ngắt kết nối: ${socket.id}`));
 });
 
