@@ -11,8 +11,19 @@ const DB_NAME = process.env.DB_NAME || 'water_level_db';
 let pool = null;
 
 async function initDb() {
-  // 1. Kết nối không chỉ định DB để tạo DB nếu chưa có
-  const setup = await mysql.createConnection(DB_CONFIG);
+  // 1. Kết nối với retry để chờ MySQL sẵn sàng (Docker race condition)
+  let setup;
+  const maxAttempts = 30;
+  for (let i = 1; i <= maxAttempts; i++) {
+    try {
+      setup = await mysql.createConnection({ ...DB_CONFIG, connectTimeout: 5000 });
+      break;
+    } catch (e) {
+      if (i === maxAttempts) throw new Error(`MySQL không lên sau ${maxAttempts} lần thử: ${e.message}`);
+      console.log(`⏳  Chờ MySQL... (lần ${i}/${maxAttempts})`);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
   await setup.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
   await setup.end();
 
