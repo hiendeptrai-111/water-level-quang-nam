@@ -1,0 +1,49 @@
+name: Scrape water level (hourly)
+
+on:
+  schedule:
+    # Chạy đúng phút :00 mỗi giờ — 7:00, 8:00, 9:00... (theo UTC)
+    # GitHub Actions cron có thể trễ vài phút khi load cao, nhưng đảm bảo
+    # chạy 1 lần / giờ. Thời gian VN = UTC+7.
+    - cron: '0 * * * *'
+
+  # Cho phép chạy thủ công từ GitHub UI (Actions tab → Run workflow)
+  workflow_dispatch:
+
+# Tránh chạy chồng nếu lần trước chưa xong
+concurrency:
+  group: scrape-water
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    name: Scrape & save to Postgres
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # Cache Chromium do Puppeteer download (~150MB) để tránh re-download mỗi run
+      - name: Cache Puppeteer browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/puppeteer
+          key: ${{ runner.os }}-puppeteer-${{ hashFiles('package-lock.json') }}
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run scrape job
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DB_SSL: 'true'
+          NODE_ENV: production
+        run: node scripts/scrape-once.js
