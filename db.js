@@ -98,10 +98,13 @@ function getPool() {
   return pool;
 }
 
+// Dữ liệu PCTT là giờ Việt Nam (UTC+7). Convert thành UTC timestamp đúng,
+// không phụ thuộc TZ của máy chạy code (quan trọng vì GitHub Actions = UTC).
 function parseDateTime(ngay, gio) {
   const [d, m, y] = ngay.split('/').map(Number);
   const [h, mn] = (gio || '00:00').split(':').map(Number);
-  return new Date(y, m - 1, d, h, mn);
+  const VN_OFFSET_MS = 7 * 3600 * 1000;
+  return new Date(Date.UTC(y, m - 1, d, h, mn) - VN_OFFSET_MS);
 }
 
 // Lưu nhiều record (upsert theo fingerprint)
