@@ -312,8 +312,12 @@ app.get('/api/water-levels', async (req, res) => {
 
 app.get('/api/water-levels/latest', async (req, res) => {
   try {
-    const records = await getRecords({ limit: 1 });
-    if (records.length) return res.json({ lastUpdated: new Date().toISOString(), record: records[records.length - 1] });
+    const pool = getPool();
+    const r = await pool.query('SELECT data FROM water_records ORDER BY ts DESC LIMIT 1');
+    if (r.rows.length) {
+      const record = typeof r.rows[0].data === 'string' ? JSON.parse(r.rows[0].data) : r.rows[0].data;
+      return res.json({ lastUpdated: new Date().toISOString(), record });
+    }
     if (fs.existsSync(DATA_FILE)) {
       const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
       return res.json({ lastUpdated: data.lastUpdated, record: data.records?.[data.records.length - 1] || null });
