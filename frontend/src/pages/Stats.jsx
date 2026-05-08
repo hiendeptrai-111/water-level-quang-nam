@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, Legend,
 } from 'recharts';
 import { API } from '../auth.jsx';
-import { HO_LIST, parseDateTime, levelStatus } from '../constants';
+import { HO_LIST, levelStatus } from '../constants';
 
 const RANGES = [
   { key: '24h', label: '24 giờ', hours: 24 },

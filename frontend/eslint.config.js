@@ -17,5 +17,17 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // React 19 hooks strict rules — relax cho patterns thực dụng
+      'react-hooks/set-state-in-effect': 'off',  // loading/fetch patterns OK
+      'react-hooks/refs':               'off',   // socket ref pattern OK
+      'react-hooks/exhaustive-deps':    'warn',  // chỉ warn, không error
+      'react-refresh/only-export-components': 'warn', // không phải bug, chỉ ảnh hưởng HMR
+      'no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+    },
   },
 ])

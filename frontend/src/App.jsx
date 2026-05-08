@@ -15,12 +15,10 @@ export default function App() {
   const [connected, setConnected] = useState(false);
   const [flash, setFlash]         = useState(false);
   const socketRef = useRef(null);
-  const [socketReady, setSocketReady] = useState(false);
 
   useEffect(() => {
     const socket = io(API, { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
-    setSocketReady(true);
     socket.on('connect',    () => setConnected(true));
     socket.on('disconnect', () => setConnected(false));
     socket.on('snapshot',          (p) => setData(p));

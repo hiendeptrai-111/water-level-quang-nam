@@ -8,16 +8,6 @@ export default function Admin() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
-  if (!user) return <Navigate to="/login" replace />;
-  if (user.role !== 'admin') {
-    return (
-      <div style={{ padding: 40, textAlign: 'center' }}>
-        <h2>🚫 Không có quyền truy cập</h2>
-        <p style={{ color: '#6b7280' }}>Trang này chỉ dành cho admin.</p>
-      </div>
-    );
-  }
-
   async function load() {
     setLoading(true); setErr('');
     try {
@@ -29,7 +19,20 @@ export default function Admin() {
     finally { setLoading(false); }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (user?.role === 'admin') load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== 'admin') {
+    return (
+      <div style={{ padding: 40, textAlign: 'center' }}>
+        <h2>🚫 Không có quyền truy cập</h2>
+        <p style={{ color: '#6b7280' }}>Trang này chỉ dành cho admin.</p>
+      </div>
+    );
+  }
 
   async function setRole(u, role) {
     if (!confirm(`Đổi quyền của "${u.username}" thành ${role.toUpperCase()}?`)) return;
