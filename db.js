@@ -1,103 +1,95 @@
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 
-const DB_CONFIG = {
-  host:     process.env.DB_HOST     || 'localhost',
-  port:     +(process.env.DB_PORT   || 3306),
-  user:     process.env.DB_USER     || 'root',
-  password: process.env.DB_PASSWORD || '060704',
-};
-const DB_NAME = process.env.DB_NAME || 'water_level_db';
+// Cho phép cấu hình bằng DATABASE_URL (Neon/Render style) HOẶC từng biến rời
+const DATABASE_URL = process.env.DATABASE_URL;
+const DB_CONFIG = DATABASE_URL
+  ? {
+      connectionString: DATABASE_URL,
+      ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
+    }
+  : {
+      host:     process.env.DB_HOST     || 'localhost',
+      port:     +(process.env.DB_PORT   || 5432),
+      user:     process.env.DB_USER     || 'postgres',
+      password: process.env.DB_PASSWORD || 'postgres',
+      database: process.env.DB_NAME     || 'water_level_db',
+      ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    };
 
 let pool = null;
 
 async function initDb() {
-  // 1. Kết nối với retry để chờ MySQL sẵn sàng (Docker race condition)
-  let setup;
+  // Retry để chờ DB sẵn sàng (Docker race condition / Neon cold start)
   const maxAttempts = 30;
   for (let i = 1; i <= maxAttempts; i++) {
     try {
-      setup = await mysql.createConnection({ ...DB_CONFIG, connectTimeout: 5000 });
+      pool = new Pool({ ...DB_CONFIG, max: 10, idleTimeoutMillis: 30000 });
+      await pool.query('SELECT 1');
       break;
     } catch (e) {
-      if (i === maxAttempts) throw new Error(`MySQL không lên sau ${maxAttempts} lần thử: ${e.message}`);
-      console.log(`⏳  Chờ MySQL... (lần ${i}/${maxAttempts})`);
+      if (pool) await pool.end().catch(() => {});
+      pool = null;
+      if (i === maxAttempts) throw new Error(`Postgres không lên sau ${maxAttempts} lần thử: ${e.message}`, { cause: e });
+      console.log(`⏳  Chờ Postgres... (lần ${i}/${maxAttempts})`);
       await new Promise((r) => setTimeout(r, 2000));
     }
   }
-  await setup.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-  await setup.end();
 
-  // 2. Pool kết nối tới DB chính
-  pool = mysql.createPool({
-    ...DB_CONFIG,
-    database: DB_NAME,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
-  });
-
-  // 3. Tạo bảng users
+  // Tạo bảng users
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id INT AUTO_INCREMENT PRIMARY KEY,
+      id SERIAL PRIMARY KEY,
       username VARCHAR(50)  UNIQUE NOT NULL,
       email    VARCHAR(120) UNIQUE NOT NULL,
       password_hash VARCHAR(255) NOT NULL,
-      role ENUM('user', 'admin') NOT NULL DEFAULT 'user',
-      is_active TINYINT(1) NOT NULL DEFAULT 1,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      role VARCHAR(10) NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin')),
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
   `);
 
-  // Migration: thêm cột nếu DB cũ
-  try { await pool.query(`ALTER TABLE users ADD COLUMN role ENUM('user','admin') NOT NULL DEFAULT 'user'`); } catch {}
-  try { await pool.query(`ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1`); } catch {}
-
-  // 4. Tạo bảng water_records (lưu lịch sử mực nước)
+  // Bảng water_records (lịch sử)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS water_records (
-      id INT AUTO_INCREMENT PRIMARY KEY,
+      id SERIAL PRIMARY KEY,
       fingerprint VARCHAR(20) UNIQUE NOT NULL,
       ngay VARCHAR(10) NOT NULL,
       gio  VARCHAR(5)  NOT NULL,
-      ts   DATETIME    NOT NULL,
-      data JSON NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_ts (ts),
-      INDEX idx_ngay (ngay)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      ts   TIMESTAMPTZ  NOT NULL,
+      data JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
   `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_water_ts   ON water_records (ts)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_water_ngay ON water_records (ngay)`);
 
-  // 5. Bảng ảnh thành viên upload cho từng hồ
+  // Bảng photos
   await pool.query(`
     CREATE TABLE IF NOT EXISTS photos (
-      id INT AUTO_INCREMENT PRIMARY KEY,
+      id SERIAL PRIMARY KEY,
       ho_key VARCHAR(30) NOT NULL,
-      user_id INT NOT NULL,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       filename VARCHAR(255) NOT NULL,
       caption TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      INDEX idx_ho (ho_key),
-      INDEX idx_created (created_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
   `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_photos_ho      ON photos (ho_key)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_photos_created ON photos (created_at)`);
 
-  // 6. Bảng bình luận
+  // Bảng comments
   await pool.query(`
     CREATE TABLE IF NOT EXISTS comments (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      photo_id INT NOT NULL,
-      user_id INT NOT NULL,
+      id SERIAL PRIMARY KEY,
+      photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+      user_id  INTEGER NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
       content TEXT NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (photo_id) REFERENCES photos(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      INDEX idx_photo (photo_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
   `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_comments_photo ON comments (photo_id)`);
 
-  console.log(`✅  MySQL connected → DB "${DB_NAME}"`);
+  console.log(`✅  Postgres connected → ${DATABASE_URL ? 'remote' : (DB_CONFIG.database || 'water_level_db')}`);
   return pool;
 }
 
@@ -106,7 +98,6 @@ function getPool() {
   return pool;
 }
 
-// "08/05/2026 14:00" → JS Date
 function parseDateTime(ngay, gio) {
   const [d, m, y] = ngay.split('/').map(Number);
   const [h, mn] = (gio || '00:00').split(':').map(Number);
@@ -116,39 +107,39 @@ function parseDateTime(ngay, gio) {
 // Lưu nhiều record (upsert theo fingerprint)
 async function saveRecords(records) {
   if (!records?.length) return 0;
-  const rows = records
-    .filter((r) => r.ngay && r.gio)
-    .map((r) => {
-      const ts = parseDateTime(r.ngay, r.gio);
-      const fp = `${r.ngay}_${r.gio}`;
-      return [fp, r.ngay, r.gio, ts, JSON.stringify(r)];
-    });
-  if (!rows.length) return 0;
+  const valid = records.filter((r) => r.ngay && r.gio);
+  if (!valid.length) return 0;
 
-  const [result] = await pool.query(
-    `INSERT INTO water_records (fingerprint, ngay, gio, ts, data)
-     VALUES ?
-     ON DUPLICATE KEY UPDATE data = VALUES(data), ts = VALUES(ts)`,
-    [rows]
-  );
-  return result.affectedRows || 0;
+  // Postgres không có VALUES ? như mysql, dùng pg-format hoặc unnest. Dùng unnest đơn giản.
+  const fps    = valid.map((r) => `${r.ngay}_${r.gio}`);
+  const ngays  = valid.map((r) => r.ngay);
+  const gios   = valid.map((r) => r.gio);
+  const tses   = valid.map((r) => parseDateTime(r.ngay, r.gio));
+  const datas  = valid.map((r) => JSON.stringify(r));
+
+  const result = await pool.query(`
+    INSERT INTO water_records (fingerprint, ngay, gio, ts, data)
+    SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::timestamptz[], $5::jsonb[])
+    ON CONFLICT (fingerprint) DO UPDATE SET data = EXCLUDED.data, ts = EXCLUDED.ts
+  `, [fps, ngays, gios, tses, datas]);
+
+  return result.rowCount || 0;
 }
 
-// Lấy records theo khoảng thời gian
 async function getRecords({ from, to, limit = 1000 } = {}) {
   let sql = 'SELECT data FROM water_records WHERE 1=1';
   const params = [];
-  if (from) { sql += ' AND ts >= ?'; params.push(from); }
-  if (to)   { sql += ' AND ts <= ?'; params.push(to);   }
-  sql += ' ORDER BY ts ASC LIMIT ?';
+  if (from) { params.push(from); sql += ` AND ts >= $${params.length}`; }
+  if (to)   { params.push(to);   sql += ` AND ts <= $${params.length}`; }
   params.push(+limit);
+  sql += ` ORDER BY ts ASC LIMIT $${params.length}`;
 
-  const [rows] = await pool.query(sql, params);
+  const { rows } = await pool.query(sql, params);
   return rows.map((r) => (typeof r.data === 'string' ? JSON.parse(r.data) : r.data));
 }
 
 async function getRecordCount() {
-  const [rows] = await pool.query('SELECT COUNT(*) AS n FROM water_records');
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM water_records');
   return rows[0].n;
 }
 

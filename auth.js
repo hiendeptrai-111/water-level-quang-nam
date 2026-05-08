@@ -57,19 +57,19 @@ function attachAuthRoutes(app) {
       const pool = getPool();
 
       // User đầu tiên đăng ký → admin
-      const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM users');
-      const role = n === 0 ? 'admin' : 'user';
+      const cnt = await pool.query('SELECT COUNT(*)::int AS n FROM users');
+      const role = cnt.rows[0].n === 0 ? 'admin' : 'user';
 
       const hash = await bcrypt.hash(password, 10);
       try {
-        const [result] = await pool.query(
-          'INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)',
+        const result = await pool.query(
+          'INSERT INTO users (username, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id',
           [username, email.toLowerCase(), hash, role]
         );
-        const user = { id: result.insertId, username, email: email.toLowerCase(), role };
+        const user = { id: result.rows[0].id, username, email: email.toLowerCase(), role };
         res.json({ token: makeToken(user), user });
       } catch (e) {
-        if (e.code === 'ER_DUP_ENTRY')
+        if (e.code === '23505') // unique_violation
           return res.status(409).json({ error: 'Username hoặc email đã tồn tại' });
         throw e;
       }
@@ -84,12 +84,12 @@ function attachAuthRoutes(app) {
       if (!username || !password) return res.status(400).json({ error: 'Thiếu thông tin' });
 
       const pool = getPool();
-      const [rows] = await pool.query(
-        'SELECT id, username, email, password_hash, role, is_active FROM users WHERE username = ? OR email = ? LIMIT 1',
+      const result = await pool.query(
+        'SELECT id, username, email, password_hash, role, is_active FROM users WHERE username = $1 OR email = $2 LIMIT 1',
         [username, username.toLowerCase()]
       );
-      if (!rows.length) return res.status(401).json({ error: 'Tài khoản không tồn tại' });
-      const u = rows[0];
+      if (!result.rows.length) return res.status(401).json({ error: 'Tài khoản không tồn tại' });
+      const u = result.rows[0];
       if (!u.is_active) return res.status(403).json({ error: 'Tài khoản đã bị khoá' });
       const ok = await bcrypt.compare(password, u.password_hash);
       if (!ok) return res.status(401).json({ error: 'Sai mật khẩu' });

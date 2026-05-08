@@ -1,21 +1,22 @@
 services:
-  mysql:
-    image: mysql:8.4
-    container_name: water-mysql
+  postgres:
+    image: postgres:16-alpine
+    container_name: water-postgres
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-changeme}
-      MYSQL_DATABASE:      ${DB_NAME:-water_level_db}
+      POSTGRES_USER:     ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB:       ${DB_NAME:-water_level_db}
     ports:
-      - "${DB_PORT:-3306}:3306"
+      - "${DB_PORT:-5432}:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD:-changeme}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-water_level_db}"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      start_period: 15s
     networks: [appnet]
 
   backend:
@@ -25,15 +26,15 @@ services:
     container_name: water-backend
     restart: unless-stopped
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
     environment:
       PORT: 4000
       APP_VERSION: ${APP_VERSION:-1.0.0}
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://localhost:5173}
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USER: root
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER:     ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-changeme}
       DB_NAME:     ${DB_NAME:-water_level_db}
       JWT_SECRET:  ${JWT_SECRET:-change-me}
@@ -41,7 +42,6 @@ services:
       - "4000:4000"
     volumes:
       - backend_uploads:/app/uploads
-      - backend_data:/app/data
     networks: [appnet]
 
   frontend:
@@ -59,9 +59,8 @@ services:
     networks: [appnet]
 
 volumes:
-  mysql_data:
+  pg_data:
   backend_uploads:
-  backend_data:
 
 networks:
   appnet:

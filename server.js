@@ -113,16 +113,16 @@ app.post('/api/photos', requireAuth, upload.single('image'), async (req, res) =>
     if (!req.file) return res.status(400).json({ error: 'Thiếu file ảnh' });
 
     const pool = getPool();
-    const [result] = await pool.query(
-      'INSERT INTO photos (ho_key, user_id, filename, caption) VALUES (?, ?, ?, ?)',
+    const ins = await pool.query(
+      'INSERT INTO photos (ho_key, user_id, filename, caption) VALUES ($1, $2, $3, $4) RETURNING id',
       [hoKey, req.user.id, req.file.filename, caption?.slice(0, 500) || null]
     );
 
-    const [rows] = await pool.query(
-      `SELECT p.*, u.username FROM photos p JOIN users u ON u.id = p.user_id WHERE p.id = ?`,
-      [result.insertId]
+    const sel = await pool.query(
+      `SELECT p.*, u.username FROM photos p JOIN users u ON u.id = p.user_id WHERE p.id = $1`,
+      [ins.rows[0].id]
     );
-    const photo = { ...rows[0], comments_count: 0 };
+    const photo = { ...sel.rows[0], comments_count: 0 };
     io.emit('photo:new', photo);
     res.json(photo);
   } catch (e) {
@@ -136,16 +136,16 @@ app.get('/api/photos', async (req, res) => {
     const { hoKey } = req.query;
     if (!VALID_HO.includes(hoKey)) return res.status(400).json({ error: 'hoKey không hợp lệ' });
     const pool = getPool();
-    const [rows] = await pool.query(`
+    const result = await pool.query(`
       SELECT p.id, p.ho_key, p.user_id, p.filename, p.caption, p.created_at, u.username,
-             (SELECT COUNT(*) FROM comments c WHERE c.photo_id = p.id) AS comments_count
+             (SELECT COUNT(*)::int FROM comments c WHERE c.photo_id = p.id) AS comments_count
       FROM photos p
       JOIN users u ON u.id = p.user_id
-      WHERE p.ho_key = ?
+      WHERE p.ho_key = $1
       ORDER BY p.created_at DESC
       LIMIT 200
     `, [hoKey]);
-    res.json({ photos: rows });
+    res.json({ photos: result.rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -155,15 +155,16 @@ app.get('/api/photos', async (req, res) => {
 app.delete('/api/photos/:id', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const [rows] = await pool.query('SELECT * FROM photos WHERE id = ?', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'Không tìm thấy' });
-    const isOwner = rows[0].user_id === req.user.id;
+    const sel = await pool.query('SELECT * FROM photos WHERE id = $1', [req.params.id]);
+    if (!sel.rows.length) return res.status(404).json({ error: 'Không tìm thấy' });
+    const photo = sel.rows[0];
+    const isOwner = photo.user_id === req.user.id;
     const isAdmin = req.user.role === 'admin';
     if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Không có quyền xoá' });
 
-    await pool.query('DELETE FROM photos WHERE id = ?', [req.params.id]);
-    try { fs.unlinkSync(path.join(UPLOAD_DIR, rows[0].filename)); } catch {}
-    io.emit('photo:delete', { id: +req.params.id, hoKey: rows[0].ho_key });
+    await pool.query('DELETE FROM photos WHERE id = $1', [req.params.id]);
+    try { fs.unlinkSync(path.join(UPLOAD_DIR, photo.filename)); } catch {}
+    io.emit('photo:delete', { id: +req.params.id, hoKey: photo.ho_key });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -174,14 +175,15 @@ app.delete('/api/photos/:id', requireAuth, async (req, res) => {
 app.delete('/api/comments/:id', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const [rows] = await pool.query('SELECT id, photo_id, user_id FROM comments WHERE id = ?', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'Không tìm thấy' });
-    const isOwner = rows[0].user_id === req.user.id;
+    const sel = await pool.query('SELECT id, photo_id, user_id FROM comments WHERE id = $1', [req.params.id]);
+    if (!sel.rows.length) return res.status(404).json({ error: 'Không tìm thấy' });
+    const c = sel.rows[0];
+    const isOwner = c.user_id === req.user.id;
     const isAdmin = req.user.role === 'admin';
     if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Không có quyền xoá' });
 
-    await pool.query('DELETE FROM comments WHERE id = ?', [req.params.id]);
-    io.emit('comment:delete', { id: +req.params.id, photo_id: rows[0].photo_id });
+    await pool.query('DELETE FROM comments WHERE id = $1', [req.params.id]);
+    io.emit('comment:delete', { id: +req.params.id, photo_id: c.photo_id });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -192,14 +194,14 @@ app.delete('/api/comments/:id', requireAuth, async (req, res) => {
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
-    const [users] = await pool.query(`
+    const result = await pool.query(`
       SELECT u.id, u.username, u.email, u.role, u.is_active, u.created_at,
-             (SELECT COUNT(*) FROM photos WHERE user_id = u.id)   AS photos_count,
-             (SELECT COUNT(*) FROM comments WHERE user_id = u.id) AS comments_count
+             (SELECT COUNT(*)::int FROM photos   WHERE user_id = u.id) AS photos_count,
+             (SELECT COUNT(*)::int FROM comments WHERE user_id = u.id) AS comments_count
       FROM users u
       ORDER BY u.created_at DESC
     `);
-    res.json({ users });
+    res.json({ users: result.rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -211,16 +213,21 @@ app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
     const id = +req.params.id;
     if (id === req.user.id) return res.status(400).json({ error: 'Không thể tự sửa chính mình' });
 
-    const allowed = {};
+    const sets = [];
+    const params = [];
     if (req.body.role !== undefined) {
       if (!['user', 'admin'].includes(req.body.role)) return res.status(400).json({ error: 'role không hợp lệ' });
-      allowed.role = req.body.role;
+      params.push(req.body.role);
+      sets.push(`role = $${params.length}`);
     }
-    if (req.body.is_active !== undefined) allowed.is_active = req.body.is_active ? 1 : 0;
-    if (!Object.keys(allowed).length) return res.status(400).json({ error: 'Không có gì để cập nhật' });
+    if (req.body.is_active !== undefined) {
+      params.push(!!req.body.is_active);
+      sets.push(`is_active = $${params.length}`);
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Không có gì để cập nhật' });
 
-    const sets = Object.keys(allowed).map((k) => `${k} = ?`).join(', ');
-    await pool.query(`UPDATE users SET ${sets} WHERE id = ?`, [...Object.values(allowed), id]);
+    params.push(id);
+    await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -233,13 +240,12 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     const id = +req.params.id;
     if (id === req.user.id) return res.status(400).json({ error: 'Không thể tự xoá chính mình' });
 
-    // Lấy file ảnh để xoá khỏi disk
-    const [photos] = await pool.query('SELECT filename FROM photos WHERE user_id = ?', [id]);
-    photos.forEach((p) => {
+    const photos = await pool.query('SELECT filename FROM photos WHERE user_id = $1', [id]);
+    photos.rows.forEach((p) => {
       try { fs.unlinkSync(path.join(UPLOAD_DIR, p.filename)); } catch {}
     });
 
-    await pool.query('DELETE FROM users WHERE id = ?', [id]);
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -250,12 +256,12 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
 app.get('/api/photos/:id/comments', async (req, res) => {
   try {
     const pool = getPool();
-    const [rows] = await pool.query(`
+    const result = await pool.query(`
       SELECT c.id, c.content, c.created_at, c.user_id, u.username
       FROM comments c JOIN users u ON u.id = c.user_id
-      WHERE c.photo_id = ? ORDER BY c.created_at ASC
+      WHERE c.photo_id = $1 ORDER BY c.created_at ASC
     `, [req.params.id]);
-    res.json({ comments: rows });
+    res.json({ comments: result.rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -268,15 +274,15 @@ app.post('/api/photos/:id/comments', requireAuth, async (req, res) => {
     if (!content) return res.status(400).json({ error: 'Nội dung trống' });
 
     const pool = getPool();
-    const [photo] = await pool.query('SELECT id FROM photos WHERE id = ?', [req.params.id]);
-    if (!photo.length) return res.status(404).json({ error: 'Không tìm thấy ảnh' });
+    const photo = await pool.query('SELECT id FROM photos WHERE id = $1', [req.params.id]);
+    if (!photo.rows.length) return res.status(404).json({ error: 'Không tìm thấy ảnh' });
 
-    const [result] = await pool.query(
-      'INSERT INTO comments (photo_id, user_id, content) VALUES (?, ?, ?)',
+    const ins = await pool.query(
+      'INSERT INTO comments (photo_id, user_id, content) VALUES ($1, $2, $3) RETURNING id',
       [req.params.id, req.user.id, content]
     );
     const comment = {
-      id: result.insertId,
+      id: ins.rows[0].id,
       photo_id: +req.params.id,
       user_id: req.user.id,
       username: req.user.username,
@@ -425,11 +431,16 @@ async function runScrapeAndBroadcast() {
   return { count: data.records.length, isNew, latest };
 }
 
-const SCRAPE_INTERVAL_MS = 10 * 60 * 1000;
-setInterval(async () => {
-  try { await runScrapeAndBroadcast(); }
-  catch (err) { console.error('Interval lỗi:', err.message); }
-}, SCRAPE_INTERVAL_MS);
+const SCRAPE_INTERVAL_MS = +(process.env.SCRAPE_INTERVAL_MS || 10 * 60 * 1000);
+const SCRAPE_DISABLED = String(process.env.SCRAPE_DISABLED).toLowerCase() === 'true';
+if (!SCRAPE_DISABLED) {
+  setInterval(async () => {
+    try { await runScrapeAndBroadcast(); }
+    catch (err) { log.error('scrape interval', { error: err.message }); }
+  }, SCRAPE_INTERVAL_MS);
+} else {
+  log.info('scrape disabled (production mode)');
+}
 
 // ─── Khởi động ─────────────────────────────────────────────────
 (async () => {
@@ -447,8 +458,10 @@ setInterval(async () => {
         console.error('Backfill lỗi:', e.message);
       }
     }
-    console.log('Chạy scrape khởi động...');
-    await runScrapeAndBroadcast();
+    if (!SCRAPE_DISABLED) {
+      console.log('Chạy scrape khởi động...');
+      await runScrapeAndBroadcast();
+    }
   } catch (err) {
     console.error('Khởi động lỗi:', err.message);
   }
