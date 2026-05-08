@@ -185,6 +185,40 @@ Pipeline **fail** nếu bất kỳ bước nào lỗi (lint error, test fail, bu
 - [INCIDENTS.md](./INCIDENTS.md) — Báo cáo 3 incident thực tế đã gặp & cách fix
 - [.env.example](./.env.example) — Template biến môi trường
 
+## Deploy production: Render + Neon (FREE)
+
+Hệ thống đã được setup để deploy miễn phí 100% trên [Render](https://render.com) (web service + static site) và [Neon](https://neon.tech) (PostgreSQL serverless).
+
+### 1. Tạo PostgreSQL trên Neon
+1. Đăng ký tại https://neon.tech (login bằng GitHub)
+2. **Create Project** → chọn region gần (Singapore/Frankfurt)
+3. Copy **Connection string** dạng `postgresql://user:pass@xxx.neon.tech/dbname?sslmode=require`
+
+### 2. Deploy lên Render bằng Blueprint
+1. Push code lên GitHub (đã làm)
+2. Vào https://render.com → **New** → **Blueprint**
+3. Connect repo `water-level-quang-nam` → Render đọc `render.yaml`
+4. Set các env var khi được hỏi:
+   - `DATABASE_URL` = connection string từ Neon
+   - `CORS_ORIGIN` = sẽ điền sau (xem bước 3)
+5. Apply → Render tạo 2 service: `water-backend` + `water-frontend`
+
+### 3. Cấu hình URL chéo
+Sau khi deploy lần đầu:
+1. Render gán URL kiểu `https://water-backend-xxx.onrender.com` và `https://water-frontend-xxx.onrender.com`
+2. Vào **water-frontend → Environment**: set `VITE_API_URL` = URL của backend → trigger redeploy
+3. Vào **water-backend → Environment**: set `CORS_ORIGIN` = URL của frontend → save
+
+### 4. Verify
+```bash
+curl https://water-backend-xxx.onrender.com/api/health
+# {"status":"healthy",...}
+```
+
+> **Lưu ý**:
+> - Free tier Render: backend **sleep sau 15 phút idle** (cold start ~30s khi request đầu)
+> - Scraper Puppeteer được **disable** ở production (`SCRAPE_DISABLED=true`) vì 512MB RAM không đủ. Data lịch sử đã có trong DB; có thể chạy scraper local rồi DB sync sang.
+
 ## Branching strategy
 
 ```
