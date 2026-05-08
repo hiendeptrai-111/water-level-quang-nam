@@ -17,7 +17,9 @@ const { attachAuthRoutes, requireAuth, requireAdmin } = require('./auth');
 
 const app = express();
 const PORT = +(process.env.PORT || 4000);
-const CORS_ORIGIN = (process.env.CORS_ORIGIN || '*').split(',').map((s) => s.trim());
+// CORS_ORIGIN: '*' = mọi origin; còn lại split thành array cho cors() check exact-match
+const _corsRaw = (process.env.CORS_ORIGIN || '*').trim();
+const CORS_ORIGIN = _corsRaw === '*' ? true : _corsRaw.split(',').map((s) => s.trim());
 
 // Structured logger
 const log = {
