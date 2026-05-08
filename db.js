@@ -107,11 +107,17 @@ function parseDateTime(ngay, gio) {
 // Lưu nhiều record (upsert theo fingerprint)
 async function saveRecords(records) {
   if (!records?.length) return 0;
-  const valid = records.filter((r) => r.ngay && r.gio);
-  if (!valid.length) return 0;
 
-  // Postgres không có VALUES ? như mysql, dùng pg-format hoặc unnest. Dùng unnest đơn giản.
-  const fps    = valid.map((r) => `${r.ngay}_${r.gio}`);
+  // Dedupe theo fingerprint, giữ bản ghi cuối (mới nhất) — vì unnest+ON CONFLICT
+  // không thể update cùng row 2 lần trong 1 INSERT.
+  const byFp = new Map();
+  for (const r of records) {
+    if (r.ngay && r.gio) byFp.set(`${r.ngay}_${r.gio}`, r);
+  }
+  if (!byFp.size) return 0;
+
+  const fps    = [...byFp.keys()];
+  const valid  = [...byFp.values()];
   const ngays  = valid.map((r) => r.ngay);
   const gios   = valid.map((r) => r.gio);
   const tses   = valid.map((r) => parseDateTime(r.ngay, r.gio));
