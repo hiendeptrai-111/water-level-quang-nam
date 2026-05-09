@@ -148,15 +148,16 @@ export default function Home({ data, flash, socket }) {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ height: '50%', position: 'relative', flexShrink: 0 }}>
+      <div style={{ height: 'min(50%, 380px)', minHeight: 280, position: 'relative', flexShrink: 0 }}>
         <MapView data={data} selected={selected} onSelect={setSelected} />
 
-        <div style={{
-          position: 'absolute', bottom: 12, left: 12, zIndex: 400,
-          background: 'rgba(255,255,255,.96)', padding: '8px 12px',
-          borderRadius: 8, boxShadow: '0 2px 10px rgba(0,0,0,.15)', fontSize: 11,
+        <div className="map-legend" style={{
+          position: 'absolute', bottom: 8, left: 8, zIndex: 400,
+          background: 'rgba(255,255,255,.96)', padding: '6px 10px',
+          borderRadius: 8, boxShadow: '0 2px 10px rgba(0,0,0,.15)', fontSize: 10,
+          maxWidth: '60%',
         }}>
-          <div style={{ fontWeight: 700, marginBottom: 4, fontSize: 10, color: '#374151' }}>CHÚ THÍCH</div>
+          <div style={{ fontWeight: 700, marginBottom: 3, fontSize: 9, color: '#374151' }}>CHÚ THÍCH</div>
           <Legend color="#16a34a" label="Bình thường" />
           <Legend color="#3b82f6" label="Mức đón lũ" />
           <Legend color="#f59e0b" label="Gần mức BT" />
@@ -164,9 +165,9 @@ export default function Home({ data, flash, socket }) {
         </div>
 
         <div style={{
-          position: 'absolute', top: 12, right: 12, zIndex: 400,
+          position: 'absolute', top: 8, right: 8, zIndex: 400,
           background: 'rgba(15,45,82,.92)', color: '#fff',
-          padding: '6px 12px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+          padding: '5px 10px', borderRadius: 999, fontSize: 10, fontWeight: 600,
         }}>
           📍 Tỉnh Quảng Nam
         </div>
