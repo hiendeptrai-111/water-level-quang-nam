@@ -205,7 +205,7 @@ function PhotoCard({ photo, socket, onDelete }) {
           }}>Xoá</button>
         )}
       </div>
-      <img src={`${API}/uploads/${photo.filename}`} alt={photo.caption || ''}
+      <img src={photo.filename?.startsWith('http') ? photo.filename : `${API}/uploads/${photo.filename}`} alt={photo.caption || ''}
         style={{ width: '100%', maxHeight: 360, objectFit: 'cover', display: 'block', background: '#f3f4f6' }} />
       {photo.caption && (
         <div style={{ padding: '8px 12px', fontSize: 13, color: '#374151' }}>
