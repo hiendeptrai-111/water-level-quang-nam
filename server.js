@@ -61,6 +61,7 @@ app.get('/api/health', async (req, res) => {
       api: 'up',
       database: dbOk ? 'up' : 'down',
       scraper: lastFingerprint ? 'up' : 'pending',
+      storage: process.env.CLOUDINARY_CLOUD_NAME ? 'cloudinary' : 'local-disk-ephemeral',
     },
     version: process.env.APP_VERSION || '1.0.0',
     timestamp: new Date().toISOString(),
