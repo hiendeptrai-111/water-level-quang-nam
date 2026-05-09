@@ -82,21 +82,27 @@ function makeFingerprint(record) {
 // ─── Auth routes ───────────────────────────────────────────────
 attachAuthRoutes(app);
 
-// ─── Static uploads ─────────────────────────────────────────────
+// ─── Storage: Cloudinary (production) hoặc local disk (dev fallback) ──
+const cloudinary = require('cloudinary').v2;
+const USE_CLOUDINARY = !!process.env.CLOUDINARY_CLOUD_NAME;
+if (USE_CLOUDINARY) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key:    process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+    secure: true,
+  });
+  log.info('storage', { provider: 'cloudinary', cloud: process.env.CLOUDINARY_CLOUD_NAME });
+}
+
+// Local disk fallback
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const safe = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-    cb(null, safe);
-  },
-});
+// Multer: dùng memory storage cho cả 2 case (sau đó tự ghi/upload)
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (!/^image\/(jpeg|png|webp|gif)$/.test(file.mimetype))
@@ -104,6 +110,39 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+// Helper: lưu ảnh, trả { url, publicId }
+async function saveUploadedImage(file) {
+  if (USE_CLOUDINARY) {
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: 'water-level', resource_type: 'image' },
+        (err, res) => err ? reject(err) : resolve(res)
+      ).end(file.buffer);
+    });
+    return { url: result.secure_url, publicId: result.public_id };
+  }
+  // Local fallback
+  const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+  const safe = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+  fs.writeFileSync(path.join(UPLOAD_DIR, safe), file.buffer);
+  return { url: `/uploads/${safe}`, publicId: null };
+}
+
+async function deleteUploadedImage({ filename, cloudinary_public_id }) {
+  if (cloudinary_public_id) {
+    try { await cloudinary.uploader.destroy(cloudinary_public_id); }
+    catch (e) { log.warn('cloudinary delete failed', { error: e.message }); }
+    return;
+  }
+  // Local file
+  if (filename && !filename.startsWith('http')) {
+    const local = filename.startsWith('/uploads/')
+      ? path.join(__dirname, filename)
+      : path.join(UPLOAD_DIR, filename);
+    try { fs.unlinkSync(local); } catch {}
+  }
+}
 
 const VALID_HO = ['a_vuong', 'song_bung_4', 'dak_mi_4', 'song_tranh_2'];
 
@@ -114,10 +153,13 @@ app.post('/api/photos', requireAuth, upload.single('image'), async (req, res) =>
     if (!VALID_HO.includes(hoKey)) return res.status(400).json({ error: 'hoKey không hợp lệ' });
     if (!req.file) return res.status(400).json({ error: 'Thiếu file ảnh' });
 
+    // Upload tới Cloudinary HOẶC ghi local
+    const { url, publicId } = await saveUploadedImage(req.file);
+
     const pool = getPool();
     const ins = await pool.query(
-      'INSERT INTO photos (ho_key, user_id, filename, caption) VALUES ($1, $2, $3, $4) RETURNING id',
-      [hoKey, req.user.id, req.file.filename, caption?.slice(0, 500) || null]
+      'INSERT INTO photos (ho_key, user_id, filename, cloudinary_public_id, caption) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+      [hoKey, req.user.id, url, publicId, caption?.slice(0, 500) || null]
     );
 
     const sel = await pool.query(
@@ -128,6 +170,7 @@ app.post('/api/photos', requireAuth, upload.single('image'), async (req, res) =>
     io.emit('photo:new', photo);
     res.json(photo);
   } catch (e) {
+    log.error('upload photo', { error: e.message });
     res.status(500).json({ error: e.message });
   }
 });
@@ -165,7 +208,7 @@ app.delete('/api/photos/:id', requireAuth, async (req, res) => {
     if (!isOwner && !isAdmin) return res.status(403).json({ error: 'Không có quyền xoá' });
 
     await pool.query('DELETE FROM photos WHERE id = $1', [req.params.id]);
-    try { fs.unlinkSync(path.join(UPLOAD_DIR, photo.filename)); } catch {}
+    await deleteUploadedImage(photo);
     io.emit('photo:delete', { id: +req.params.id, hoKey: photo.ho_key });
     res.json({ ok: true });
   } catch (e) {
@@ -242,10 +285,8 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     const id = +req.params.id;
     if (id === req.user.id) return res.status(400).json({ error: 'Không thể tự xoá chính mình' });
 
-    const photos = await pool.query('SELECT filename FROM photos WHERE user_id = $1', [id]);
-    photos.rows.forEach((p) => {
-      try { fs.unlinkSync(path.join(UPLOAD_DIR, p.filename)); } catch {}
-    });
+    const photos = await pool.query('SELECT filename, cloudinary_public_id FROM photos WHERE user_id = $1', [id]);
+    await Promise.all(photos.rows.map(deleteUploadedImage));
 
     await pool.query('DELETE FROM users WHERE id = $1', [id]);
     res.json({ ok: true });

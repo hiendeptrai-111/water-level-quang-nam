@@ -64,16 +64,22 @@ async function initDb() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_water_ngay ON water_records (ngay)`);
 
   // Bảng photos
+  // filename: tên file local HOẶC URL Cloudinary đầy đủ (https://res.cloudinary.com/...)
+  // cloudinary_public_id: NULL nếu local file, có giá trị nếu upload qua Cloudinary
   await pool.query(`
     CREATE TABLE IF NOT EXISTS photos (
       id SERIAL PRIMARY KEY,
       ho_key VARCHAR(30) NOT NULL,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      filename VARCHAR(255) NOT NULL,
+      filename VARCHAR(500) NOT NULL,
+      cloudinary_public_id VARCHAR(200),
       caption TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+  // Migration cho DB cũ
+  try { await pool.query(`ALTER TABLE photos ALTER COLUMN filename TYPE VARCHAR(500)`); } catch {}
+  try { await pool.query(`ALTER TABLE photos ADD COLUMN cloudinary_public_id VARCHAR(200)`); } catch {}
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_photos_ho      ON photos (ho_key)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_photos_created ON photos (created_at)`);
 
