@@ -7,6 +7,7 @@ import {
 import { isToday, levelStatus, getLatestForHo } from '../constants';
 import { useAuth } from '../auth.jsx';
 import PhotoGallery from './PhotoGallery';
+import DamVisualization from './DamVisualization';
 
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -124,6 +125,15 @@ export default function DetailPanel({ ho, data, onClose, socket }) {
         </div>
 
         <div style={{ padding: '18px 22px' }}>
+          <Section title="Trực quan mực nước">
+            <DamVisualization
+              ho={ho}
+              currentLevel={r?.mucNuoc}
+              qQuaTran={r?.qQuaTran || 0}
+              qChayMay={r?.qChayMay || 0}
+            />
+          </Section>
+
           <Section title="Lưu lượng hiện tại">
             <Grid cols={3}>
               <Stat label="Q đến" value={r?.qDen} unit="m³/s" />
