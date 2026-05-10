@@ -1,26 +1,48 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 
 export default function Register() {
-  const { register } = useAuth();
+  const { register, getCaptcha } = useAuth();
   const nav = useNavigate();
   const [username, setUsername] = useState('');
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm]   = useState('');
+  const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [captcha, setCaptcha] = useState({ token: '', svg: '' });
+  const [loadingCap, setLoadingCap] = useState(false);
+  const [hp, setHp] = useState(''); // honeypot, không hiển thị
   const [err, setErr]   = useState('');
   const [busy, setBusy] = useState(false);
+
+  async function refreshCaptcha() {
+    setLoadingCap(true); setCaptchaAnswer('');
+    try {
+      const d = await getCaptcha();
+      setCaptcha(d);
+    } catch (e) { setErr(e.message); }
+    finally { setLoadingCap(false); }
+  }
+
+  useEffect(() => { refreshCaptcha(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function submit(e) {
     e.preventDefault();
     if (password !== confirm) return setErr('Mật khẩu nhập lại không khớp');
     setErr(''); setBusy(true);
     try {
-      await register(username, email, password);
+      await register({
+        username, email, password,
+        captchaToken: captcha.token,
+        captchaAnswer,
+        hp,
+      });
       nav('/');
     } catch (e) {
       setErr(e.message);
+      // Nếu lỗi liên quan captcha → refresh
+      if (/[Mm]ã/.test(e.message)) refreshCaptcha();
     } finally {
       setBusy(false);
     }
@@ -48,6 +70,44 @@ export default function Register() {
         <Label>Nhập lại mật khẩu</Label>
         <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required style={inp} />
 
+        {/* HONEYPOT: ẩn với user, bot sẽ tự fill */}
+        <input type="text" name="company" value={hp} onChange={(e) => setHp(e.target.value)}
+          tabIndex="-1" autoComplete="off"
+          style={{ position: 'absolute', left: '-9999px', opacity: 0, height: 0, width: 0 }}
+        />
+
+        <Label>Mã xác minh</Label>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'stretch' }}>
+          <div style={{
+            flex: '0 0 170px',
+            background: '#f8fafc', border: '1px solid #d1d5db', borderRadius: 8,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            minHeight: 60, overflow: 'hidden',
+          }}>
+            {loadingCap ? (
+              <span style={{ fontSize: 11, color: '#9ca3af' }}>Đang tải...</span>
+            ) : (
+              <div dangerouslySetInnerHTML={{ __html: captcha.svg }} style={{ pointerEvents: 'none', userSelect: 'none' }} />
+            )}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+            <input type="text" value={captchaAnswer}
+              onChange={(e) => setCaptchaAnswer(e.target.value)}
+              required maxLength={10}
+              style={{ ...inp, marginBottom: 0, textTransform: 'uppercase' }}
+              placeholder="Nhập mã"
+              autoComplete="off" />
+            <button type="button" onClick={refreshCaptcha} disabled={loadingCap}
+              style={{
+                padding: '6px 10px', fontSize: 11, color: '#0f2d52',
+                background: 'transparent', border: '1px solid #d1d5db', borderRadius: 6,
+                cursor: 'pointer', fontWeight: 600,
+              }}>
+              🔄 Đổi mã khác
+            </button>
+          </div>
+        </div>
+
         {err && <div style={errBox}>{err}</div>}
 
         <button type="submit" disabled={busy} style={{ ...btn, opacity: busy ? .6 : 1 }}>
@@ -62,8 +122,8 @@ export default function Register() {
   );
 }
 
-const wrap = { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: '#f1f5f9' };
-const card = { width: 'min(440px, 100%)', background: '#fff', borderRadius: 14, padding: '28px 30px', boxShadow: '0 4px 24px rgba(0,0,0,.08)', border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column' };
+const wrap = { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: '#f1f5f9', overflowY: 'auto' };
+const card = { width: 'min(440px, 100%)', background: '#fff', borderRadius: 14, padding: '28px 30px', boxShadow: '0 4px 24px rgba(0,0,0,.08)', border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', position: 'relative' };
 const inp = { padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14, marginBottom: 14, fontFamily: 'inherit' };
 const btn = { padding: '11px 14px', borderRadius: 8, fontSize: 14, fontWeight: 700, background: '#fbbf24', color: '#1f2937', border: 'none', cursor: 'pointer', marginTop: 4 };
 const errBox = { background: '#fee2e2', color: '#991b1b', borderRadius: 8, padding: '8px 12px', fontSize: 12, fontWeight: 600, marginBottom: 10 };

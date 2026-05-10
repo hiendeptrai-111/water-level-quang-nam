@@ -1,9 +1,67 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const svgCaptcha = require('svg-captcha');
+const rateLimit = require('express-rate-limit');
 const { getPool } = require('./db');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'water-level-secret-change-me-in-prod';
 const JWT_EXPIRES = '7d';
+
+// ─── CAPTCHA store: token → {answer, expires} ─────────────────
+const captchaStore = new Map();
+const CAPTCHA_TTL_MS = 5 * 60 * 1000; // 5 phút
+
+function cleanupCaptcha() {
+  const now = Date.now();
+  for (const [k, v] of captchaStore.entries()) if (v.expires < now) captchaStore.delete(k);
+}
+setInterval(cleanupCaptcha, 60 * 1000); // dọn mỗi phút
+
+function makeCaptcha() {
+  // ignoreChars: bỏ ký tự dễ nhầm (0/O/o/1/l/I)
+  const opts = {
+    size: 5,
+    noise: 3,
+    color: true,
+    background: '#f8fafc',
+    ignoreChars: '0o1ilI',
+    width: 160,
+    height: 60,
+    fontSize: 50,
+  };
+  const cap = svgCaptcha.create(opts);
+  const token = crypto.randomBytes(16).toString('hex');
+  captchaStore.set(token, {
+    answer: cap.text.toLowerCase(),
+    expires: Date.now() + CAPTCHA_TTL_MS,
+  });
+  return { token, svg: cap.data };
+}
+
+function verifyCaptcha(token, answer) {
+  if (!token || !answer) return { ok: false, reason: 'Thiếu mã xác minh' };
+  const c = captchaStore.get(token);
+  if (!c) return { ok: false, reason: 'Mã đã hết hạn, vui lòng làm mới' };
+  captchaStore.delete(token); // 1 lần dùng
+  if (c.expires < Date.now()) return { ok: false, reason: 'Mã đã hết hạn' };
+  if (c.answer !== String(answer).trim().toLowerCase()) return { ok: false, reason: 'Mã xác minh không đúng' };
+  return { ok: true };
+}
+
+// ─── Rate limiters ────────────────────────────────────────────
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5, // 5 lần / 15 phút / IP
+  message: { error: 'Bạn đăng ký quá nhiều lần. Thử lại sau 15 phút.' },
+  standardHeaders: true, legacyHeaders: false,
+});
+const loginLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20, // 20 lần / 10 phút / IP (đủ cho user nhập sai vài lần)
+  message: { error: 'Quá nhiều lần đăng nhập sai. Thử lại sau 10 phút.' },
+  standardHeaders: true, legacyHeaders: false,
+});
 
 function makeToken(user) {
   return jwt.sign(
@@ -42,9 +100,23 @@ function maybeAuth(req, res, next) {
 }
 
 function attachAuthRoutes(app) {
-  app.post('/api/auth/register', async (req, res) => {
+  // Cấp CAPTCHA mới
+  app.get('/api/auth/captcha', (req, res) => {
+    const { token, svg } = makeCaptcha();
+    res.json({ token, svg });
+  });
+
+  app.post('/api/auth/register', registerLimiter, async (req, res) => {
     try {
-      const { username, email, password } = req.body || {};
+      const { username, email, password, captchaToken, captchaAnswer, hp } = req.body || {};
+
+      // Honeypot: bot tự fill mọi field, user thật để trống
+      if (hp) return res.status(400).json({ error: 'Phát hiện bot' });
+
+      // Verify CAPTCHA trước (chống spam DB)
+      const cap = verifyCaptcha(captchaToken, captchaAnswer);
+      if (!cap.ok) return res.status(400).json({ error: cap.reason });
+
       if (!username || !email || !password)
         return res.status(400).json({ error: 'Thiếu thông tin' });
       if (password.length < 6)
@@ -78,7 +150,7 @@ function attachAuthRoutes(app) {
     }
   });
 
-  app.post('/api/auth/login', async (req, res) => {
+  app.post('/api/auth/login', loginLimiter, async (req, res) => {
     try {
       const { username, password } = req.body || {};
       if (!username || !password) return res.status(400).json({ error: 'Thiếu thông tin' });

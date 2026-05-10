@@ -28,6 +28,8 @@ const log = {
   error: (msg, meta) => console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'ERROR', msg, ...meta })),
 };
 
+// Render dùng reverse proxy → tin tưởng X-Forwarded-For để rate-limit lấy IP thật
+app.set('trust proxy', 1);
 app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
 app.use(express.json());
 
