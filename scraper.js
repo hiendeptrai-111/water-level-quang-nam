@@ -32,8 +32,20 @@ async function scrapeWaterLevels() {
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
 
-    // 1. Mở trang
-    await page.goto(URL, { waitUntil: 'networkidle2', timeout: 60000 });
+    // 1. Mở trang — retry 3 lần với timeout 90s vì mạng GitHub Actions ↔ VN không ổn định
+    let lastErr;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await page.goto(URL, { waitUntil: 'networkidle2', timeout: 90000 });
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`⚠️  Goto attempt ${attempt}/3 failed: ${err.message}`);
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 5000));
+      }
+    }
+    if (lastErr) throw lastErr;
 
     // 2. Đợi bảng dữ liệu xuất hiện (trang tự load data khi mở)
     await page.waitForNetworkIdle({ idleTime: 1500, timeout: 30000 }).catch(() => {});
