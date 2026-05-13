@@ -2,10 +2,11 @@ name: Scrape water level (hourly)
 
 on:
   schedule:
-    # Chạy đúng phút :00 mỗi giờ — 7:00, 8:00, 9:00... (theo UTC)
-    # GitHub Actions cron có thể trễ vài phút khi load cao, nhưng đảm bảo
-    # chạy 1 lần / giờ. Thời gian VN = UTC+7.
-    - cron: '0 * * * *'
+    # Chạy 2 lần/giờ tại phút :00 và :30.
+    # Lý do: trang PCTT publish bản ghi mỗi giờ với delay 5-20 phút sau mốc giờ.
+    # Nếu chỉ chạy :00, data luôn trễ ~1 tiếng (vì lúc 13:00 chưa có bản ghi 13:00).
+    # Chạy thêm :30 → đảm bảo bắt được data mới ngay khi PCTT publish.
+    - cron: '*/30 * * * *'
 
   # Cho phép chạy thủ công từ GitHub UI (Actions tab → Run workflow)
   workflow_dispatch:
